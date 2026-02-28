@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>懷舊小食堂 - 記憶遊戲</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #FDF6E3; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: manipulation;
+        }
+        .emoji-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .emoji-card:active {
+            transform: scale(0.95);
+        }
+        ::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <!-- 遊戲主容器 -->
+    <div class="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden border-4 border-amber-100 relative">
+        
+        <!-- 音效開關 -->
+        <button id="soundToggleBtn" class="absolute top-4 right-4 bg-amber-600 hover:bg-amber-700 text-white p-2 rounded-full shadow-md z-10 transition-colors">
+            🔊 音效開
+        </button>
+
+        <!-- 標題區 -->
+        <div class="bg-amber-500 text-white text-center py-6 px-4">
+            <h1 class="text-3xl font-bold mb-2 pt-2">🧑‍🍳 懷舊小食堂</h1>
+            <p id="gameMessage" class="text-lg font-medium">歡迎光臨！請準備幫忙買菜囉！</p>
+        </div>
+
+        <!-- 遊戲內容區 -->
+        <div class="p-6 text-center">
+            
+            <!-- 狀態 1：記憶階段 -->
+            <div id="memorizeScreen" class="hidden">
+                <h2 class="text-2xl text-gray-700 font-bold mb-6">今日菜單需要：</h2>
+                <div id="targetItems" class="flex justify-center gap-4 flex-wrap mb-8"></div>
+                <div class="w-full bg-gray-200 rounded-full h-4 mb-4">
+                    <div id="progressBar" class="bg-amber-500 h-4 rounded-full transition-all duration-1000 w-full"></div>
+                </div>
+                <p class="text-gray-500 text-lg">請記住這些食材...</p>
+            </div>
+
+            <!-- 狀態 2：回憶階段 -->
+            <div id="recallScreen" class="hidden">
+                <h2 class="text-2xl text-gray-700 font-bold mb-2">請從菜籃中挑選！</h2>
+                <p id="progressText" class="text-amber-600 font-bold mb-6 text-xl">已找到: 0 / 3</p>
+                <div id="marketGrid" class="grid grid-cols-3 gap-4"></div>
+            </div>
+
+            <!-- 狀態 3：過關結果階段 -->
+            <div id="resultScreen" class="hidden py-8">
+                <div id="resultIcon" class="text-8xl mb-4">🎉</div>
+                <h2 id="resultTitle" class="text-3xl font-bold text-gray-800 mb-2">太棒了！</h2>
+                <p id="resultDesc" class="text-xl text-gray-600 mb-8">食材都買齊了，準備開飯！</p>
+                <button id="nextBtn" class="bg-green-500 hover:bg-green-600 text-white text-2xl font-bold py-4 px-10 rounded-full shadow-lg transition-transform transform hover:scale-105 active:scale-95">
+                    下一關 ➡️
+                </button>
+            </div>
+
+            <!-- 狀態 4：猜錯/結算階段 (新功能！) -->
+            <div id="gameOverScreen" class="hidden py-8">
+                <div class="text-8xl mb-4">😅</div>
+                <h2 class="text-3xl font-bold text-gray-800 mb-4">哎呀，不小心買錯了！</h2>
+                <p id="gameOverDesc" class="text-xl text-gray-700 mb-2">
+                    <!-- 這裡會由 JS 動態填入通過幾關 -->
+                </p>
+                <p class="text-xl text-amber-600 font-bold mb-8">表現得很棒了，繼續加油喔！💪</p>
+                <button id="restartBtn" class="bg-amber-500 hover:bg-amber-600 text-white text-2xl font-bold py-4 px-10 rounded-full shadow-lg transition-transform transform hover:scale-105 active:scale-95">
+                    🔄 重頭開始
+                </button>
+            </div>
+
+            <!-- 開始按鈕 -->
+            <div id="startScreen" class="py-8">
+                <div class="text-8xl mb-6">🛒</div>
+                <button id="startBtn" class="bg-amber-500 hover:bg-amber-600 text-white text-2xl font-bold py-4 px-12 rounded-full shadow-lg transition-transform transform hover:scale-105 active:scale-95">
+                    開始買菜
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // --- 音效與語音系統 ---
+        let audioEnabled = true;
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playTone(freq, type, duration, vol=0.1) {
+            if (!audioEnabled || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            
+            gainNode.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        const playCorrectSound = () => playTone(880, 'sine', 0.3, 0.2);
+        const playWrongSound = () => {
+            playTone(300, 'triangle', 0.4, 0.2); // 更長的低音，表示失敗
+            setTimeout(() => playTone(250, 'triangle', 0.5, 0.2), 200);
+        };
+        const playSuccessSound = () => {
+            setTimeout(() => playTone(523.25, 'sine', 0.4, 0.2), 0);
+            setTimeout(() => playTone(659.25, 'sine', 0.4, 0.2), 150);
+            setTimeout(() => playTone(783.99, 'sine', 0.6, 0.2), 300);
+        };
+
+        function speak(text) {
+            if (!audioEnabled || !('speechSynthesis' in window)) return;
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'zh-TW';
+            utterance.rate = 0.85; 
+            utterance.pitch = 0.9;
+            
+            window.speechSynthesis.speak(utterance);
+        }
+
+        const soundToggleBtn = document.getElementById('soundToggleBtn');
+        soundToggleBtn.addEventListener('click', () => {
+            audioEnabled = !audioEnabled;
+            soundToggleBtn.textContent = audioEnabled ? '🔊 音效開' : '🔇 音效關';
+            soundToggleBtn.className = audioEnabled 
+                ? 'absolute top-4 right-4 bg-amber-600 hover:bg-amber-700 text-white p-2 rounded-full shadow-md z-10 transition-colors'
+                : 'absolute top-4 right-4 bg-gray-400 hover:bg-gray-500 text-white p-2 rounded-full shadow-md z-10 transition-colors';
+            if(audioEnabled) {
+                initAudio();
+                playCorrectSound();
+            }
+        });
+
+        // --- 遊戲資料與邏輯 ---
+        const allFoods = ['🍎', '🍌', '🍉', '🍇', '🥕', '🥦', '🌽', '🍅', '🥚', '🥩', '🐟', '🍗', '🍞', '🧀', '🧅', '🥬'];
+        
+        let currentLevel = 1;
+        let targetCount = 3;
+        let gridSize = 9;
+        let targets = [];
+        let selectedCount = 0;
+
+        const startScreen = document.getElementById('startScreen');
+        const memorizeScreen = document.getElementById('memorizeScreen');
+        const recallScreen = document.getElementById('recallScreen');
+        const resultScreen = document.getElementById('resultScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen'); // 新增結算畫面
+        const targetItemsDiv = document.getElementById('targetItems');
+        const marketGridDiv = document.getElementById('marketGrid');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const gameMessage = document.getElementById('gameMessage');
+
+        function shuffle(array) {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex != 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        }
+
+        // 開始 / 重置遊戲
+        function startGame(isRestart = false) {
+            initAudio();
+            
+            if (isRestart) {
+                currentLevel = 1; // 如果是重頭開始，關卡歸零
+            }
+
+            startScreen.classList.add('hidden');
+            resultScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            selectedCount = 0;
+            
+            targetCount = Math.min(3 + Math.floor((currentLevel - 1) / 2), 5);
+            gridSize = currentLevel > 3 ? 12 : 9;
+
+            gameMessage.textContent = `第 ${currentLevel} 關：請記住清單`;
+            
+            if (currentLevel === 1) speak("來去買菜囉！請記住這幾樣菜。");
+            else speak(`第${currentLevel}關，請看菜單。`);
+            
+            const shuffledFoods = shuffle([...allFoods]);
+            const roundFoods = shuffledFoods.slice(0, gridSize);
+            targets = roundFoods.slice(0, targetCount);
+
+            showMemorizeScreen(targets, roundFoods);
+        }
+
+        function showMemorizeScreen(targets, roundFoods) {
+            memorizeScreen.classList.remove('hidden');
+            targetItemsDiv.innerHTML = '';
+            
+            targets.forEach(food => {
+                const div = document.createElement('div');
+                div.className = 'text-6xl bg-white p-4 rounded-2xl shadow-md border-2 border-amber-200';
+                div.textContent = food;
+                targetItemsDiv.appendChild(div);
+            });
+
+            progressBar.style.width = '100%';
+            progressBar.style.transition = 'none';
+            
+            setTimeout(() => {
+                progressBar.style.transition = 'width 5s linear';
+                progressBar.style.width = '0%';
+            }, 50);
+
+            setTimeout(() => {
+                memorizeScreen.classList.add('hidden');
+                showRecallScreen(roundFoods);
+            }, 5000);
+        }
+
+        function showRecallScreen(roundFoods) {
+            recallScreen.classList.remove('hidden');
+            marketGridDiv.innerHTML = '';
+            gameMessage.textContent = "清單收起來囉！請挑選";
+            progressText.textContent = `已找到: 0 / ${targetCount}`;
+            progressText.className = "text-amber-600 font-bold mb-6 text-xl";
+
+            const displayFoods = shuffle([...roundFoods]);
+            marketGridDiv.className = gridSize === 12 ? "grid grid-cols-4 gap-3" : "grid grid-cols-3 gap-4";
+
+            displayFoods.forEach(food => {
+                const btn = document.createElement('button');
+                btn.className = 'emoji-card text-5xl bg-amber-50 aspect-square rounded-2xl shadow-sm border-2 border-amber-200 flex items-center justify-center hover:bg-amber-100';
+                btn.textContent = food;
+                
+                btn.onclick = () => handleSelection(btn, food);
+                marketGridDiv.appendChild(btn);
+            });
+        }
+
+        function handleSelection(btn, food) {
+            if (btn.disabled) return;
+
+            if (targets.includes(food)) {
+                // --- 答對邏輯 ---
+                playCorrectSound();
+                btn.disabled = true;
+                btn.classList.remove('bg-amber-50', 'border-amber-200');
+                btn.classList.add('bg-green-100', 'border-green-500', 'ring-4', 'ring-green-200');
+                
+                selectedCount++;
+                progressText.textContent = `太棒了！已找到: ${selectedCount} / ${targetCount}`;
+                progressText.classList.remove('text-amber-600');
+                progressText.classList.add('text-green-600');
+
+                if (selectedCount === targetCount) {
+                    setTimeout(showSuccessScreen, 500);
+                }
+            } else {
+                // --- 答錯邏輯 (新功能：進入結算畫面) ---
+                playWrongSound();
+                recallScreen.classList.add('hidden');
+                gameOverScreen.classList.remove('hidden');
+                gameMessage.textContent = "休息一下再出發！";
+
+                const passed = currentLevel - 1;
+                const gameOverDesc = document.getElementById('gameOverDesc');
+
+                // 根據通過的關卡給予不同的鼓勵語氣
+                if (passed > 0) {
+                    gameOverDesc.innerHTML = `你成功幫忙完成了 <span class="font-bold text-amber-600 text-2xl">${passed}</span> 次採買任務！`;
+                    speak(`哎呀，不小心買錯了。不過你已經順利完成了${passed}次採買，非常厲害！休息一下，繼續加油喔！`);
+                } else {
+                    gameOverDesc.innerHTML = `差一點點就記住了！<br>沒關係，當作暖身！`;
+                    speak(`差一點點就記住了！沒關係，當作暖身，我們重頭再來，繼續加油喔！`);
+                }
+            }
+        }
+
+        function showSuccessScreen() {
+            recallScreen.classList.add('hidden');
+            resultScreen.classList.remove('hidden');
+            
+            playSuccessSound();
+            speak("太厲害了，記性真好，今晚可以加菜啦！");
+
+            gameMessage.textContent = "任務完成！";
+            document.getElementById('resultIcon').textContent = '🍲';
+            document.getElementById('resultTitle').textContent = '太厲害了！';
+            document.getElementById('resultDesc').textContent = '記性真好，今晚可以加菜啦！';
+            
+            currentLevel++;
+        }
+
+        // --- 綁定按鈕 ---
+        document.getElementById('startBtn').addEventListener('click', () => startGame(false));
+        document.getElementById('nextBtn').addEventListener('click', () => startGame(false));
+        // 新增：重頭開始按鈕
+        document.getElementById('restartBtn').addEventListener('click', () => startGame(true));
+
+    </script>
+</body>
+</html>
